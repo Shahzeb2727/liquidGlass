@@ -623,14 +623,27 @@
 // fully robhust
 
 
+// app/components/LiquidEffects.tsx
 "use client";
 
 import { useEffect, useRef, useState } from "react";
 
+interface DeviceInfo {
+  isMobile: boolean;
+  isTablet: boolean;
+  isIOS: boolean;
+  isAndroid: boolean;
+  isSafari: boolean;
+  hasWebGL: boolean;
+  supportsRipples: boolean;
+  effectLevel: 'full' | 'basic' | 'minimal';
+}
+
 export default function LiquidEffects() {
   const once = useRef(false);
-  const [isSupported, setIsSupported] = useState(true);
-  const [isLoading, setIsLoading] = useState(true);
+  const [deviceInfo, setDeviceInfo] = useState<DeviceInfo | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const cleanupRef = useRef<(() => void) | null>(null);
 
   useEffect(() => {
     if (once.current) return;
@@ -638,233 +651,279 @@ export default function LiquidEffects() {
 
     let destroyed = false;
     let $: any;
-    let ripplesInitialized = false;
+    let ripplesActive = false;
 
-    // Simplified device detection
-    const detectDevice = () => {
+    // Comprehensive device detection
+    const detectDevice = (): DeviceInfo => {
       const ua = navigator.userAgent.toLowerCase();
-      const isMobile = /android|webos|iphone|ipad|ipod|blackberry|iemobile|opera mini/i.test(ua);
-      const isTablet = /ipad|tablet|playbook|silk|(android(?!.*mobile))/i.test(ua);
       
-      // Simple WebGL check
+      const isMobile = /android|webos|iphone|ipod|blackberry|iemobile|opera mini/i.test(ua);
+      const isTablet = /ipad|tablet|playbook|silk|(android(?!.*mobile))/i.test(ua);
+      const isIOS = /iphone|ipad|ipod/.test(ua);
+      const isAndroid = /android/.test(ua);
+      const isSafari = /safari/.test(ua) && !/chrome/.test(ua);
+      
+      // WebGL detection
       let hasWebGL = false;
       try {
         const canvas = document.createElement('canvas');
-        hasWebGL = !!(canvas.getContext('webgl') || canvas.getContext('experimental-webgl'));
+        const gl = canvas.getContext('webgl') || canvas.getContext('experimental-webgl');
+        hasWebGL = !!gl;
+        if (gl) {
+          // Try to get GPU info
+          const debugInfo = (gl as WebGLRenderingContext).getExtension('WEBGL_debug_renderer_info');
+          if (debugInfo) {
+            const renderer = (gl as WebGLRenderingContext).getParameter(debugInfo.UNMASKED_RENDERER_WEBGL);
+            console.log('[Device] GPU:', renderer);
+          }
+        }
       } catch (e) {
+        console.warn('[Device] WebGL detection failed:', e);
         hasWebGL = false;
       }
 
-      console.log('Device Detection:', {
-        isMobile,
-        isTablet,
-        hasWebGL,
-        userAgent: ua,
-        platform: navigator.platform
-      });
+      // Determine if device can handle ripples
+      const supportsRipples = hasWebGL && 
+                             !isIOS && // iOS Safari has issues with ripples
+                             !(isAndroid && isMobile); // Android mobile struggles with ripples
 
-      return {
-        isMobile,
-        isTablet,
-        hasWebGL,
-        isDesktop: !isMobile && !isTablet
-      };
-    };
-
-    const waitForLiquidGL = async (): Promise<void> => {
-      // Check if already loaded
-      if ((window as any).liquidGL) return;
+      // Determine effect level
+      let effectLevel: 'full' | 'basic' | 'minimal' = 'full';
       
-      return new Promise<void>((resolve, reject) => {
-        const timeout = setTimeout(() => {
-          console.error('LiquidGL load timeout');
-          reject(new Error('LiquidGL load timeout'));
-        }, 15000); // Increased timeout for slower connections
+      if (!hasWebGL) {
+        effectLevel = 'minimal';
+      } else if (isMobile || isTablet || isIOS) {
+        effectLevel = 'basic';
+      } else {
+        effectLevel = 'full';
+      }
+
+      const info = {
+        isMobile,
+        isTablet,
+        isIOS,
+        isAndroid,
+        isSafari,
+        hasWebGL,
+        supportsRipples,
+        effectLevel
+      };
+
+      console.log('[Device] Detection:', info);
+      return info;
+    };
+
+    // Wait for LiquidGL to be ready
+    const waitForLiquidGL = (): Promise<boolean> => {
+      return new Promise((resolve) => {
+        let attempts = 0;
+        const maxAttempts = 40; // 20 seconds
         
-        const checkReady = () => {
+        const check = () => {
           if ((window as any).liquidGL) {
-            clearTimeout(timeout);
-            resolve();
+            console.log('[Effects] LiquidGL found');
+            resolve(true);
+            return;
           }
+          
+          attempts++;
+          if (attempts >= maxAttempts) {
+            console.error('[Effects] LiquidGL timeout');
+            resolve(false);
+            return;
+          }
+          
+          setTimeout(check, 500);
         };
-
-        window.addEventListener("liquidgl:ready", () => {
-          clearTimeout(timeout);
-          resolve();
-        }, { once: true });
-
-        // Also check periodically in case event was missed
-        const checkInterval = setInterval(() => {
-          if ((window as any).liquidGL) {
-            clearInterval(checkInterval);
-            clearTimeout(timeout);
-            resolve();
-          }
-        }, 500);
-
-        setTimeout(() => clearInterval(checkInterval), 14000);
+        
+        // Also listen for the ready event
+        const readyListener = () => {
+          console.log('[Effects] LiquidGL ready event received');
+          resolve(true);
+        };
+        
+        window.addEventListener('liquidgl:ready', readyListener, { once: true });
+        
+        // Start checking
+        check();
       });
     };
 
+    // Main initialization
     const initEffects = async () => {
       try {
+        // Detect device capabilities
         const device = detectDevice();
-        
-        // For desktop, we should have WebGL
+        setDeviceInfo(device);
+
         if (!device.hasWebGL) {
-          console.error('WebGL not available');
-          setIsSupported(false);
-          setIsLoading(false);
+          setError('WebGL not supported on this device');
           return;
         }
 
-        // Wait for LiquidGL with better error handling
-        try {
-          await waitForLiquidGL();
-        } catch (loadError) {
-          console.error('Failed to load LiquidGL:', loadError);
-          setIsSupported(false);
-          setIsLoading(false);
+        // Wait for LiquidGL
+        const liquidGLReady = await waitForLiquidGL();
+        
+        if (!liquidGLReady) {
+          setError('LiquidGL failed to load');
           return;
         }
 
         if (destroyed) return;
 
-        // jQuery import
+        // Load jQuery
         try {
           const jqMod = await import("jquery");
-          $ = jqMod.default as any;
+          $ = jqMod.default;
           (window as any).$ = $;
           (window as any).jQuery = $;
+          console.log('[Effects] jQuery loaded');
           
-          // Wait for jQuery to be ready
           await new Promise(resolve => setTimeout(resolve, 200));
         } catch (jqError) {
-          console.error('jQuery load failed:', jqError);
-          setIsSupported(false);
-          setIsLoading(false);
+          console.error('[Effects] jQuery failed:', jqError);
+          setError('Failed to load jQuery');
           return;
         }
 
-        // Ripples - Desktop should support this
-        if (device.isDesktop) {
+        if (destroyed) return;
+
+        // Initialize Ripples (only if supported)
+        if (device.supportsRipples && device.effectLevel === 'full') {
           try {
             // @ts-ignore
             await import("jquery.ripples");
-            if (destroyed) return;
-
-            // Wait a bit for ripples to load
-            await new Promise(resolve => setTimeout(resolve, 100));
+            console.log('[Effects] Ripples library loaded');
+            
+            await new Promise(resolve => setTimeout(resolve, 200));
 
             const $ripples = $(".ripples");
-            if ($ripples.length > 0) {
+            
+            if ($ripples.length > 0 && typeof $ripples.ripples === 'function') {
               $ripples.ripples({
                 resolution: 512,
                 dropRadius: 20,
                 perturbance: 0.04,
                 interactive: true,
               });
-              ripplesInitialized = true;
-              console.log('Ripples initialized successfully');
+              ripplesActive = true;
+              console.log('[Effects] Ripples initialized');
             }
           } catch (ripplesError) {
-            console.warn("Ripples initialization failed (non-critical):", ripplesError);
-            // Continue without ripples - not a critical failure
+            console.warn('[Effects] Ripples skipped:', ripplesError);
+            // Non-critical - continue without ripples
           }
+        } else {
+          console.log('[Effects] Ripples disabled for this device');
         }
 
-        // LiquidGL initialization
+        if (destroyed) return;
+
+        // Initialize LiquidGL with device-specific settings
         if ((window as any).liquidGL) {
           try {
             const settings = {
               target: ".menu-wrap",
-              resolution: device.isDesktop ? 1.0 : 0.5,
+              resolution: device.effectLevel === 'full' ? 1.0 : 
+                         device.effectLevel === 'basic' ? 0.5 : 0.3,
               reveal: "none",
               refraction: 0,
-              bevelDepth: 0.052,
-              bevelWidth: 0.211,
-              frost: 2,
-              shadow: true,
-              specular: true,
+              bevelDepth: device.effectLevel === 'full' ? 0.052 : 0.026,
+              bevelWidth: device.effectLevel === 'full' ? 0.211 : 0.105,
+              frost: device.effectLevel === 'full' ? 2 : 1,
+              shadow: device.effectLevel === 'full',
+              specular: device.effectLevel === 'full',
               tilt: false,
-              tiltFactor: 5,
+              tiltFactor: 0,
             };
 
             (window as any).liquidGL(settings);
-            console.log('LiquidGL initialized with settings:', settings);
-            
-            // Desktop can use syncWith
-            if (device.isDesktop && (window as any).liquidGL?.syncWith) {
+            console.log('[Effects] LiquidGL initialized with settings:', settings);
+
+            // Sync (desktop only)
+            if (!device.isMobile && (window as any).liquidGL?.syncWith) {
               setTimeout(() => {
-                if ((window as any).liquidGL?.syncWith) {
+                if (!destroyed && (window as any).liquidGL?.syncWith) {
                   (window as any).liquidGL.syncWith();
+                  console.log('[Effects] LiquidGL synced');
                 }
               }, 500);
             }
 
-            // Success!
-            setIsLoading(false);
-            console.log('All effects initialized successfully');
-          } catch (liquidError) {
-            console.error('LiquidGL initialization error:', liquidError);
-            setIsSupported(false);
-            setIsLoading(false);
+          } catch (lgError) {
+            console.error('[Effects] LiquidGL init error:', lgError);
+            setError('LiquidGL initialization failed');
           }
-        } else {
-          console.error('liquidGL function not found on window');
-          setIsSupported(false);
-          setIsLoading(false);
         }
-        
+
       } catch (error) {
-        console.error("Effects initialization failed:", error);
-        setIsSupported(false);
-        setIsLoading(false);
+        console.error('[Effects] Fatal error:', error);
+        setError(String(error));
       }
     };
 
-    // Start initialization
-    initEffects();
-
-    return () => {
+    // Cleanup function
+    cleanupRef.current = () => {
       destroyed = true;
       try {
-        if ($ && ripplesInitialized) {
-          $(".ripples").ripples("destroy");
+        if ($ && ripplesActive) {
+          const $ripples = $(".ripples");
+          if ($ripples.length > 0 && typeof $ripples.ripples === 'function') {
+            $ripples.ripples("destroy");
+            console.log('[Effects] Ripples destroyed');
+          }
         }
-      } catch (e) {
-        console.error("Cleanup failed:", e);
+      } catch (cleanupError) {
+        console.error('[Effects] Cleanup error:', cleanupError);
+      }
+    };
+
+    // Start initialization with a small delay for production
+    const initDelay = process.env.NODE_ENV === 'production' ? 300 : 100;
+    setTimeout(() => {
+      if (!destroyed) initEffects();
+    }, initDelay);
+
+    return () => {
+      if (cleanupRef.current) {
+        cleanupRef.current();
       }
     };
   }, []);
 
-  // Loading state
-  if (isLoading) {
+  // Development debug info
+  if (process.env.NODE_ENV === 'development' && deviceInfo) {
     return (
       <div style={{
         position: 'fixed',
-        bottom: 20,
-        right: 20,
-        padding: '10px 20px',
-        background: 'rgba(0,0,0,0.5)',
-        borderRadius: 8,
-        fontSize: 12,
-        color: '#fff',
-        zIndex: 9999
+        bottom: 10,
+        left: 10,
+        padding: '8px 12px',
+        background: 'rgba(0,0,0,0.8)',
+        color: 'white',
+        fontSize: '10px',
+        borderRadius: 6,
+        zIndex: 99999,
+        fontFamily: 'monospace',
+        maxWidth: '200px'
       }}>
-        Loading effects...
+        <div><strong>Effect Level:</strong> {deviceInfo.effectLevel}</div>
+        <div><strong>WebGL:</strong> {deviceInfo.hasWebGL ? '✅' : '❌'}</div>
+        <div><strong>Ripples:</strong> {deviceInfo.supportsRipples ? '✅' : '❌'}</div>
+        <div><strong>Device:</strong> {deviceInfo.isMobile ? 'Mobile' : deviceInfo.isTablet ? 'Tablet' : 'Desktop'}</div>
+        {error && <div style={{color: '#ff6666', marginTop: 4}}><strong>Error:</strong> {error}</div>}
       </div>
     );
   }
 
-  // Error state
-  if (!isSupported) {
+  // Production error display (only critical errors)
+  if (error && error.includes('WebGL')) {
     return (
       <div style={{
         position: 'fixed',
         bottom: 20,
         right: 20,
-        padding: '10px 20px',
+        padding: '10px 16px',
         background: 'rgba(255,0,0,0.1)',
         border: '1px solid rgba(255,0,0,0.3)',
         borderRadius: 8,
@@ -872,7 +931,7 @@ export default function LiquidEffects() {
         color: '#ff6666',
         zIndex: 9999
       }}>
-        Glass effects not supported. Check console for details.
+        Glass effects unavailable
       </div>
     );
   }
