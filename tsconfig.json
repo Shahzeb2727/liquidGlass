@@ -30,6 +30,7 @@
     ".next/dev/types/**/*.ts",
     "**/*.mts"
 , "app/components/LiquidLoader.tsx" ,
+ "types/**/*.d.ts",
   "global.d.ts"
 , "public/vendor/liquidGL.js" ],
   "exclude": ["node_modules"]
