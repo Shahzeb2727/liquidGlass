@@ -425,24 +425,210 @@
 
 
 
+// "use client";
+
+// import { useEffect, useRef, useState } from "react";
+
+// export default function LiquidEffects() {
+//   const once = useRef(false);
+//   const [isSupported, setIsSupported] = useState(true);
+//   const captureTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+
+//   // Device info logging
+//   useEffect(() => {
+//     console.log('Device info:', {
+//       userAgent: navigator.userAgent,
+//       webgl: !!document.createElement('canvas').getContext('webgl'),
+//       touch: 'ontouchstart' in window,
+//       pixelRatio: window.devicePixelRatio
+//     });
+//   }, []);
+
+//   useEffect(() => {
+//     if (once.current) return;
+//     once.current = true;
+
+//     let destroyed = false;
+//     let $: any;
+//     let ripplesInitialized = false;
+
+//     // Check device capabilities
+//     const checkSupport = () => {
+//       const canvas = document.createElement('canvas');
+//       const gl = canvas.getContext('webgl') || canvas.getContext('experimental-webgl');
+      
+//       const isTouchDevice = 'ontouchstart' in window || navigator.maxTouchPoints > 0;
+//       const isProblematicMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent) && 
+//                                    !/Chrome/i.test(navigator.userAgent);
+      
+//       if (!gl) {
+//         console.warn('WebGL not supported');
+//         return false;
+//       }
+      
+//       if (isProblematicMobile) {
+//         console.warn('Device might have compatibility issues');
+//       }
+      
+//       return true;
+//     };
+
+//     const waitForLiquidGL = async () => {
+//       if ((window as any).liquidGL) return;
+      
+//       return new Promise<void>((resolve, reject) => {
+//         const timeout = setTimeout(() => {
+//           reject(new Error('LiquidGL load timeout'));
+//         }, 10000);
+        
+//         window.addEventListener("liquidgl:ready", () => {
+//           clearTimeout(timeout);
+//           resolve();
+//         }, { once: true });
+//       });
+//     };
+
+//     // Single capture function to avoid multiple blinks
+//     const captureOnce = () => {
+//       const r = (window as any).__liquidGLRenderer__;
+//       if (!r?.captureSnapshot || destroyed) return;
+      
+//       try {
+//         r.captureSnapshot();
+//       } catch (e) {
+//         console.error('Snapshot capture failed:', e);
+//       }
+//     };
+
+//     (async () => {
+//       try {
+//         // Check support
+//         if (!checkSupport()) {
+//           setIsSupported(false);
+//           return;
+//         }
+
+//         await waitForLiquidGL();
+//         if (destroyed) return;
+
+//         // jQuery dynamic import
+//         const jqMod = await import("jquery");
+//         $ = jqMod.default as any;
+//         (window as any).$ = $;
+//         (window as any).jQuery = $;
+
+//         // Small delay to ensure jQuery is ready
+//         await new Promise(resolve => setTimeout(resolve, 100));
+
+//         // ripples plugin with error handling
+//         try {
+//           // @ts-ignore
+//           await import("jquery.ripples");
+//           if (destroyed) return;
+
+//           const $ripples = $(".ripples");
+//           if ($ripples.length > 0) {
+//             $ripples.ripples({
+//               resolution: window.innerWidth > 768 ? 512 : 256,
+//               dropRadius: 20,
+//               perturbance: 0.04,
+//               interactive: true,
+//             });
+//             ripplesInitialized = true;
+//           }
+//         } catch (ripplesError) {
+//           console.error("Ripples initialization failed:", ripplesError);
+//         }
+
+//         // liquidGL init with error handling
+//         try {
+//           if ((window as any).liquidGL) {
+//             (window as any).liquidGL({
+//               target: ".menu-wrap",
+//               resolution: window.innerWidth > 768 ? 1.0 : 0.5,
+//               reveal: "none",
+//               refraction: 0,
+//               bevelDepth: 0.052,
+//               bevelWidth: 0.211,
+//               frost: 2,
+//               shadow: true,
+//               specular: true,
+//               tilt: false,
+//               tiltFactor: 5,
+//             });
+
+//             // Sync if available
+//             if ((window as any).liquidGL?.syncWith) {
+//               (window as any).liquidGL.syncWith();
+//             }
+
+//             // Only capture once after a delay, not multiple times
+//             captureTimeoutRef.current = setTimeout(() => {
+//               if (!destroyed) captureOnce();
+//             }, 500);
+//           }
+//         } catch (liquidError) {
+//           console.error("LiquidGL initialization failed:", liquidError);
+//         }
+        
+//       } catch (error) {
+//         console.error("LiquidEffects setup failed:", error);
+//         setIsSupported(false);
+//       }
+//     })();
+
+//     return () => {
+//       destroyed = true;
+      
+//       // Clear any pending captures
+//       if (captureTimeoutRef.current) {
+//         clearTimeout(captureTimeoutRef.current);
+//       }
+      
+//       try {
+//         if ($ && ripplesInitialized) {
+//           $(".ripples").ripples("destroy");
+//         }
+//       } catch (e) {
+//         console.error("Cleanup failed:", e);
+//       }
+//     };
+//   }, []);
+
+//   if (!isSupported) {
+//     return (
+//       <div style={{
+//         position: 'fixed',
+//         bottom: 20,
+//         right: 20,
+//         padding: '10px 20px',
+//         background: 'rgba(255,0,0,0.1)',
+//         border: '1px solid rgba(255,0,0,0.3)',
+//         borderRadius: 8,
+//         fontSize: 12,
+//         color: '#ff6666',
+//         zIndex: 9999
+//       }}>
+//         Glass effects not supported on this device
+//       </div>
+//     );
+//   }
+
+//   return null;
+// }
+
+
+
+
+
 "use client";
 
 import { useEffect, useRef, useState } from "react";
 
 export default function LiquidEffects() {
   const once = useRef(false);
-  const [isSupported, setIsSupported] = useState(true);
+  const [status, setStatus] = useState<'loading' | 'active' | 'fallback' | 'error'>('loading');
   const captureTimeoutRef = useRef<NodeJS.Timeout | null>(null);
-
-  // Device info logging
-  useEffect(() => {
-    console.log('Device info:', {
-      userAgent: navigator.userAgent,
-      webgl: !!document.createElement('canvas').getContext('webgl'),
-      touch: 'ontouchstart' in window,
-      pixelRatio: window.devicePixelRatio
-    });
-  }, []);
 
   useEffect(() => {
     if (once.current) return;
@@ -452,25 +638,21 @@ export default function LiquidEffects() {
     let $: any;
     let ripplesInitialized = false;
 
-    // Check device capabilities
-    const checkSupport = () => {
+    // Simple device check
+    const getDeviceInfo = () => {
+      const ua = navigator.userAgent;
       const canvas = document.createElement('canvas');
       const gl = canvas.getContext('webgl') || canvas.getContext('experimental-webgl');
       
-      const isTouchDevice = 'ontouchstart' in window || navigator.maxTouchPoints > 0;
-      const isProblematicMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent) && 
-                                   !/Chrome/i.test(navigator.userAgent);
+      const info = {
+        hasWebGL: !!gl,
+        isMobile: /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(ua),
+        isIOS: /iPhone|iPad|iPod/i.test(ua),
+        isLowEnd: (navigator.hardwareConcurrency || 4) < 4 || ((navigator as any).deviceMemory || 4) < 4
+      };
       
-      if (!gl) {
-        console.warn('WebGL not supported');
-        return false;
-      }
-      
-      if (isProblematicMobile) {
-        console.warn('Device might have compatibility issues');
-      }
-      
-      return true;
+      console.log('Device info:', info);
+      return info;
     };
 
     const waitForLiquidGL = async () => {
@@ -488,7 +670,6 @@ export default function LiquidEffects() {
       });
     };
 
-    // Single capture function to avoid multiple blinks
     const captureOnce = () => {
       const r = (window as any).__liquidGLRenderer__;
       if (!r?.captureSnapshot || destroyed) return;
@@ -500,87 +681,96 @@ export default function LiquidEffects() {
       }
     };
 
-    (async () => {
-      try {
-        // Check support
-        if (!checkSupport()) {
-          setIsSupported(false);
-          return;
-        }
+    const init = async () => {
+      const device = getDeviceInfo();
 
+      // No WebGL - use CSS fallback
+      if (!device.hasWebGL) {
+        console.log('No WebGL - using CSS fallback');
+        document.body.classList.add('no-webgl');
+        setStatus('fallback');
+        return;
+      }
+
+      try {
         await waitForLiquidGL();
         if (destroyed) return;
 
-        // jQuery dynamic import
+        // jQuery
         const jqMod = await import("jquery");
         $ = jqMod.default as any;
         (window as any).$ = $;
         (window as any).jQuery = $;
 
-        // Small delay to ensure jQuery is ready
         await new Promise(resolve => setTimeout(resolve, 100));
 
-        // ripples plugin with error handling
-        try {
-          // @ts-ignore
-          await import("jquery.ripples");
-          if (destroyed) return;
+        // Ripples - skip on iOS and low-end devices
+        if (!device.isIOS && !device.isLowEnd) {
+          try {
+            // @ts-ignore
+            await import("jquery.ripples");
+            if (destroyed) return;
 
-          const $ripples = $(".ripples");
-          if ($ripples.length > 0) {
-            $ripples.ripples({
-              resolution: window.innerWidth > 768 ? 512 : 256,
-              dropRadius: 20,
-              perturbance: 0.04,
-              interactive: true,
-            });
-            ripplesInitialized = true;
+            const $ripples = $(".ripples");
+            if ($ripples.length > 0) {
+              $ripples.ripples({
+                resolution: device.isMobile ? 256 : 512,
+                dropRadius: 20,
+                perturbance: 0.04,
+                interactive: true,
+              });
+              ripplesInitialized = true;
+              console.log('Ripples initialized');
+            }
+          } catch (e) {
+            console.warn("Ripples skipped:", e);
           }
-        } catch (ripplesError) {
-          console.error("Ripples initialization failed:", ripplesError);
+        } else {
+          console.log('Ripples disabled for this device');
         }
 
-        // liquidGL init with error handling
-        try {
-          if ((window as any).liquidGL) {
-            (window as any).liquidGL({
-              target: ".menu-wrap",
-              resolution: window.innerWidth > 768 ? 1.0 : 0.5,
-              reveal: "none",
-              refraction: 0,
-              bevelDepth: 0.052,
-              bevelWidth: 0.211,
-              frost: 2,
-              shadow: true,
-              specular: true,
-              tilt: false,
-              tiltFactor: 5,
-            });
+        // LiquidGL
+        if ((window as any).liquidGL) {
+          const settings = {
+            target: ".menu-wrap",
+            resolution: device.isMobile || device.isLowEnd ? 0.5 : 1.0,
+            reveal: "none",
+            refraction: 0,
+            bevelDepth: device.isLowEnd ? 0.03 : 0.052,
+            bevelWidth: device.isLowEnd ? 0.1 : 0.211,
+            frost: device.isLowEnd ? 1 : 2,
+            shadow: !device.isLowEnd,
+            specular: !device.isLowEnd,
+            tilt: false,
+            tiltFactor: 5,
+          };
 
-            // Sync if available
-            if ((window as any).liquidGL?.syncWith) {
-              (window as any).liquidGL.syncWith();
-            }
+          (window as any).liquidGL(settings);
+          console.log('LiquidGL initialized');
 
-            // Only capture once after a delay, not multiple times
-            captureTimeoutRef.current = setTimeout(() => {
-              if (!destroyed) captureOnce();
-            }, 500);
+          if ((window as any).liquidGL?.syncWith) {
+            (window as any).liquidGL.syncWith();
           }
-        } catch (liquidError) {
-          console.error("LiquidGL initialization failed:", liquidError);
+
+          captureTimeoutRef.current = setTimeout(() => {
+            if (!destroyed) captureOnce();
+          }, 500);
+          
+          setStatus('active');
         }
         
       } catch (error) {
-        console.error("LiquidEffects setup failed:", error);
-        setIsSupported(false);
+        console.error("Init failed:", error);
+        document.body.classList.add('no-webgl');
+        setStatus('error');
       }
-    })();
+    };
+
+    init();
 
     return () => {
       destroyed = true;
       
-      // Clear any pending captures
       if (captureTimeoutRef.current) {
         clearTimeout(captureTimeoutRef.current);
       }
@@ -595,21 +785,29 @@ export default function LiquidEffects() {
     };
   }, []);
 
-  if (!isSupported) {
+  // Development only - show status
+  if (process.env.NODE_ENV === 'development') {
+    const colors = {
+      loading: '#ffaa00',
+      active: '#00ff00',
+      fallback: '#00aaff',
+      error: '#ff0000'
+    };
+    
     return (
       <div style={{
         position: 'fixed',
-        bottom: 20,
-        right: 20,
-        padding: '10px 20px',
-        background: 'rgba(255,0,0,0.1)',
-        border: '1px solid rgba(255,0,0,0.3)',
-        borderRadius: 8,
-        fontSize: 12,
-        color: '#ff6666',
-        zIndex: 9999
+        bottom: 10,
+        left: 10,
+        padding: '6px 12px',
+        background: 'rgba(0,0,0,0.8)',
+        color: colors[status],
+        fontSize: 11,
+        fontFamily: 'monospace',
+        borderRadius: 4,
+        zIndex: 99999
       }}>
-        Glass effects not supported on this device
+        Effects: {status}
       </div>
     );
   }
